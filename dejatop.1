@@ -1,0 +1,131 @@
+.TH DEJATOP 1 "June 2026" "Version 1.0.0-beta" "User Commands"
+.SH NAME
+dejatop \- Seamless, zero-dependency Desktop Entry Creator for Linux
+.SH SYNOPSIS
+.B dejatop
+.IR <path/to/executable> " [" \fIoptions\fR ]
+.br
+.B dejatop
+.B --replace-icon
+.IR <name> " " <icon_path>
+.br
+.B dejatop
+.B --delete
+.IR <name>
+.br
+.B dejatop
+.B --list
+.br
+.B dejatop
+.B --version
+.br
+.B dejatop
+.B --help
+.SH DESCRIPTION
+.B DejaTop
+is a fast, zero-dependency CLI utility that automatically generates
+.I .desktop
+entries for Linux native apps, AppImages, GOG games, and Windows games
+run through Wine or Steam Proton (including GE-Proton).
+.PP
+When passed a path to an executable, DejaTop will automatically detect
+the best runner, scan Steam (native and Flatpak), Heroic Games Launcher,
+and Lutris for an existing Proton prefix, pick the best available icon,
+and generate the desktop entry \[em] with zero user interaction needed.
+.SH OPTIONS
+.TP
+.BR \-\-name " \fIname\fR"
+Override the auto-detected game name.
+.TP
+.BR \-\-icon " \fIpath\fR"
+Override the auto-detected icon with a specific file path.
+.TP
+.BR \-\-runner " \fInative|wine|proton\fR"
+Override the auto-detected runner.
+.TP
+.BR \-\-prefix " \fIpath\fR"
+Override the Wine/Proton prefix path. Useful when you know the exact
+Steam compatdata folder to use.
+.SH COMMANDS
+.TP
+.B \-\-replace-icon \fIname\fR \fIicon_path\fR
+Case-insensitively swaps the icon of an existing DejaTop desktop entry.
+If the entry has no Icon= line, one is appended automatically.
+.TP
+.B \-\-delete \fIname\fR
+Case-insensitively deletes a desktop entry and its associated wrapper script.
+.TP
+.B \-\-list
+Lists all desktop entries currently managed by DejaTop.
+.TP
+.B \-\-version
+Displays the current version of DejaTop.
+.TP
+.B \-\-help
+Displays the help message.
+.SH PREFIX DISCOVERY
+For Windows
+.I .exe
+files, DejaTop searches for an existing Proton prefix in the following order:
+.PP
+1. Steam (native): ~/.local/share/Steam/userdata/*/config/shortcuts.vdf
+.br
+2. Steam (Flatpak): ~/.var/app/com.valvesoftware.Steam/data/Steam/userdata/
+.br
+3. Heroic Games Launcher: ~/.config/heroic/GamesConfig/*.json
+.br
+4. Lutris: ~/.config/lutris/games/*.yml
+.PP
+If no prefix is found, the user is prompted interactively whether to
+create a shared DejaTop prefix.
+.SH PROTON SELECTION
+DejaTop selects Proton in the following priority order:
+.PP
+1. Latest GE-Proton (e.g., GE-Proton9-27)
+.br
+2. Latest official Steam Proton (e.g., Proton \- Experimental)
+.br
+3. If neither is found, DejaTop exits with a clear error message.
+.SH NOTES
+.PP
+Scripts
+.RI ( .sh )
+and AppImages
+.RI ( .AppImage )
+are always treated as native executables. Proton/prefix logic is
+exclusively triggered for
+.I .exe
+files.
+.SH EXAMPLES
+.TP
+Create a desktop entry for a Windows game (auto prefix + Proton):
+.B dejatop /mnt/Games/MyGame/game.exe
+.TP
+Override the name:
+.B dejatop /mnt/Games/MyGame/game.exe --name "My Game"
+.TP
+Create a native entry for an AppImage:
+.B dejatop /home/user/apps/app.AppImage --name "My App"
+.TP
+Force a specific Steam prefix:
+.B dejatop /path/to/game.exe --prefix ~/.local/share/Steam/steamapps/compatdata/3848358784
+.TP
+Fix a wrong icon (case-insensitive):
+.B dejatop --replace-icon "assassin" /path/to/icon.png
+.TP
+Remove an entry:
+.B dejatop --delete "portal"
+.TP
+List all managed entries:
+.B dejatop --list
+.SH KNOWN ISSUES (BETA)
+.TP
+\(bu Windows .exe icon extraction is not yet supported. Use --icon to supply one manually.
+.TP
+\(bu Steam Flatpak GE-Proton: prefix discovery works, but running Proton from outside the Flatpak sandbox requires a flatpak-run wrapper (not yet implemented).
+.TP
+\(bu GOG Galaxy and standalone Wine prefix discovery are not yet implemented.
+.SH AUTHOR
+Created by DejaTop Contributors.
+.SH LICENSE
+GNU General Public License v3.0
