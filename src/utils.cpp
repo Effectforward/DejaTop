@@ -40,6 +40,18 @@ string toLower(string s) {
     return WIFEXITED(status) ? WEXITSTATUS(status) : EXEC_FORK_FAILED;
 }
 
+string runCommandOutput(const string& cmd) {
+    std::array<char, 128> buffer;
+    string result;
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return "";
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+        result += buffer.data();
+    }
+    pclose(pipe);
+    return result;
+}
+
 bool commandExists(const string& cmd) {
     return runCommand({"which", cmd}) == EXEC_SUCCESS;
 }

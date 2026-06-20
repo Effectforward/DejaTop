@@ -12,6 +12,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <pwd.h>
+#include <cstdio>
+#include <memory>
+#include <array>
 
 namespace fs = std::filesystem;
 using std::string;

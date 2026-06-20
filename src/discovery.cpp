@@ -1,4 +1,5 @@
 #include "../include/discovery.hpp"
+#include <sstream>
 
 bool protonSortCompare(const string& a, const string& b) {
     string nameA = toLower(fs::path(a).filename().string());
@@ -45,40 +46,114 @@ vector<string> findProtonVersions() {
     return versions;
 }
 
+void getPngDimensions(const string& path, int& w, int& h) {
+    w = 0; h = 0;
+    ifstream in(path, ios::binary);
+    if (!in) return;
+    char sig[8];
+    if (!in.read(sig, 8)) return;
+    if (static_cast<unsigned char>(sig[0]) != 137 || sig[1] != 80 || sig[2] != 78 || sig[3] != 71 ||
+        sig[4] != 13 || sig[5] != 10 || sig[6] != 26 || sig[7] != 10) return;
+    char chunk[8];
+    if (!in.read(chunk, 8)) return;
+    if (chunk[4] != 'I' || chunk[5] != 'H' || chunk[6] != 'D' || chunk[7] != 'R') return;
+    char dims[8];
+    if (!in.read(dims, 8)) return;
+    w = (static_cast<unsigned char>(dims[0]) << 24) | (static_cast<unsigned char>(dims[1]) << 16) |
+        (static_cast<unsigned char>(dims[2]) << 8) | static_cast<unsigned char>(dims[3]);
+    h = (static_cast<unsigned char>(dims[4]) << 24) | (static_cast<unsigned char>(dims[5]) << 16) |
+        (static_cast<unsigned char>(dims[6]) << 8) | static_cast<unsigned char>(dims[7]);
+}
+
+int getIconScore(const string& path, const string& gameName) {
+    int score = 0;
+    string pathLower = toLower(path);
+    string fLower = toLower(fs::path(path).filename().string());
+    string gLower = toLower(gameName);
+    string extLower = toLower(fs::path(path).extension().string());
+
+    if (extLower == ".svg") score += 100;
+    else if (extLower == ".png") score += 80;
+    else if (extLower == ".ico") score += 40;
+    else if (extLower == ".xpm") score += 20;
+
+    if (extLower == ".png") {
+        int w = 0, h = 0;
+        getPngDimensions(path, w, h);
+        if (w > 0 && h > 0) {
+            if (w == h) score += 30;
+            else score -= 20;
+            if (w >= 512 && h >= 512) score += 40;
+            else if (w >= 256 && h >= 256) score += 30;
+            else if (w >= 128 && h >= 128) score += 20;
+            else if (w >= 64 && h >= 64) score += 10;
+        }
+    }
+
+    string fBase = fLower.substr(0, fLower.find_last_of('.'));
+    if (fBase == gLower && !gLower.empty()) score += 100;
+    else if (!gLower.empty() && fLower.find(gLower) != string::npos) score += 50;
+
+    if (fLower == "icon.png" || fLower == "logo.svg" || fLower == "icon.svg" || fLower == "logo.png") score += 60;
+    else if (fLower.find("icon") != string::npos || fLower.find("logo") != string::npos) score += 20;
+
+    if (pathLower.find("/icons/") != string::npos || pathLower.find("/pixmaps/") != string::npos || pathLower.find("/hicolor/") != string::npos) score += 40;
+
+    string parentDir = toLower(fs::path(path).parent_path().filename().string());
+    if (parentDir == gLower && !gLower.empty()) score += 20;
+
+    vector<string> uiPenalties = {"button", "ui", "hud", "menu", "cursor", "banner", "header", "hero", "bg", "background"};
+    for (const auto& p : uiPenalties) if (pathLower.find(p) != string::npos) score -= 50;
+    vector<string> gamePenalties = {"weapon", "item", "skill", "sprite", "texture", "atlas", "char", "portrait"};
+    for (const auto& p : gamePenalties) if (pathLower.find(p) != string::npos) score -= 50;
+    vector<string> sysPenalties = {"crash", "unins", "setup", "redist", "steam_api"};
+    for (const auto& p : sysPenalties) if (pathLower.find(p) != string::npos) score -= 100;
+
+    return score;
+}
+
 vector<string> findIcons(const string& execDir) {
-    vector<string> bestIcons, goodIcons, okayIcons, badIcons;
+    string cmd = "find \"" + execDir + "\" -type f \\( -iname \"*.desktop\" -o -iname \"*.svg\" -o -iname \"*.png\" -o -iname \"*.ico\" -o -iname \"*.xpm\" \\)";
+    string out = runCommandOutput(cmd);
+    vector<string> files;
+    std::stringstream ss(out);
+    string line;
+    while (std::getline(ss, line)) {
+        if (!line.empty()) files.push_back(line);
+    }
 
-    try {
-        for (const auto& entry : fs::recursive_directory_iterator(execDir, fs::directory_options::skip_permission_denied)) {
-            if (entry.is_regular_file()) {
-                string pathStr = entry.path().string();
-                string filename = entry.path().filename().string();
-                string ext = entry.path().extension().string();
-                
-                string fLower = toLower(filename);
-                string pLower = toLower(pathStr);
-
-                if (ext == ".png" || ext == ".ico") {
-                    if (pLower.find("steam-runtime") != string::npos || pLower.find("/usr/") != string::npos || pLower.find("/help/") != string::npos) {
-                        badIcons.push_back(pathStr);
-                    } else if (fLower.find("icon") != string::npos || fLower.find("game") != string::npos || fLower.find("logo") != string::npos) {
-                        bestIcons.push_back(pathStr);
-                    } else if (ext == ".ico") {
-                        goodIcons.push_back(pathStr);
-                    } else {
-                        okayIcons.push_back(pathStr);
-                    }
+    for (const auto& f : files) {
+        if (toLower(fs::path(f).extension().string()) == ".desktop") {
+            ifstream in(f);
+            string dline, targetIcon = "";
+            while (std::getline(in, dline)) {
+                if (dline.find("Icon=") == 0) {
+                    targetIcon = dline.substr(5);
+                    break;
+                }
+            }
+            if (!targetIcon.empty()) {
+                if (fs::exists(targetIcon)) return {targetIcon};
+                for (const auto& sf : files) {
+                    string sname = fs::path(sf).filename().string();
+                    if (sname == targetIcon || sname == targetIcon + ".png" || sname == targetIcon + ".svg") return {sf};
                 }
             }
         }
-    } catch (const fs::filesystem_error&) {}
+    }
 
-    vector<string> allIcons;
-    for (const auto& p : bestIcons) allIcons.push_back(p);
-    for (const auto& p : goodIcons) allIcons.push_back(p);
-    for (const auto& p : okayIcons) allIcons.push_back(p);
-    for (const auto& p : badIcons) allIcons.push_back(p);
-    return allIcons;
+    string gameName = fs::path(execDir).filename().string();
+    vector<std::pair<string, int>> scored;
+    for (const auto& f : files) {
+        if (toLower(fs::path(f).extension().string()) != ".desktop") {
+            scored.push_back({f, getIconScore(f, gameName)});
+        }
+    }
+    sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+
+    vector<string> ret;
+    for (const auto& s : scored) ret.push_back(s.first);
+    return ret;
 }
 
 string extractExeIcon(const string& execPath, const string& safeName) {
@@ -87,18 +162,15 @@ string extractExeIcon(const string& execPath, const string& safeName) {
     string iconsDir = (fs::path(getHomeDir()) / ".local" / "share" / "DejaTop" / "icons").string();
     fs::create_directories(iconsDir);
 
-    // Create a temporary working directory
     string tmpBase = (fs::path(getHomeDir()) / ".local" / "share" / "DejaTop" / (".tmp_icon_" + safeName)).string();
     fs::create_directories(tmpBase);
 
-    // Step 1: Extract .ico resources from the .exe (resource type 14 = RT_GROUP_ICON)
     int ret = runCommand({"wrestool", "-x", "-t", "14", execPath, "-o", tmpBase});
     if (ret != 0) {
         fs::remove_all(tmpBase);
         return "";
     }
 
-    // Step 2: Find the largest extracted .ico file (likely the highest quality)
     string bestIco;
     uintmax_t bestSize = 0;
     try {
@@ -118,20 +190,31 @@ string extractExeIcon(const string& execPath, const string& safeName) {
         return "";
     }
 
-    // Step 3: Convert .ico to .png using icotool, requesting the largest size available
-    string outPng = (fs::path(iconsDir) / (safeName + ".png")).string();
-    ret = runCommand({"icotool", "-x", "-w", "256", "-o", outPng, bestIco});
-    if (ret != 0) {
-        // Retry without size constraint (some icons don't have 256px)
-        ret = runCommand({"icotool", "-x", "-o", outPng, bestIco});
+    ret = runCommand({"icotool", "-x", "-o", tmpBase, bestIco});
+    string bestPng;
+    uintmax_t bestPngSize = 0;
+    if (ret == 0) {
+        try {
+            for (const auto& entry : fs::directory_iterator(tmpBase)) {
+                if (entry.is_regular_file() && toLower(entry.path().extension().string()) == ".png") {
+                    uintmax_t sz = entry.file_size();
+                    if (sz > bestPngSize) {
+                        bestPngSize = sz;
+                        bestPng = entry.path().string();
+                    }
+                }
+            }
+        } catch (...) {}
     }
 
-    // Cleanup temp directory
-    fs::remove_all(tmpBase);
-
-    if (ret == 0 && fs::exists(outPng)) {
+    string outPng = (fs::path(iconsDir) / (safeName + ".png")).string();
+    if (!bestPng.empty()) {
+        fs::copy_file(bestPng, outPng, fs::copy_options::overwrite_existing);
+        fs::remove_all(tmpBase);
         return outPng;
     }
+
+    fs::remove_all(tmpBase);
     return "";
 }
 
