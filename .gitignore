@@ -1,1 +1,30 @@
-files
+# Compiled Binaries
+dejatop
+dejatop_test
+
+# Object Files and Libraries
+*.o
+obj/
+*.a
+*.so
+*.dylib
+*.dll
+
+# Archives and Packages
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+
+# Project-Specific Ignored Directories
+files/
+
+# IDE and Editor Configuration Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

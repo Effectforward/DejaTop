@@ -2,7 +2,8 @@ CXX = g++
 CXXFLAGS = -std=c++17 -O3 -Wall
 
 TARGET = dejatop
-SRC = dejatop.cpp
+SRC = $(wildcard src/*.cpp)
+OBJ = $(patsubst src/%.cpp,obj/%.o,$(SRC))
 
 PREFIX = $(HOME)/.local/bin
 APPS_DIR = $(HOME)/.local/share/applications
@@ -11,8 +12,12 @@ COMP_DIR = $(HOME)/.local/share/bash-completion/completions
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
-	$(CXX) $(CXXFLAGS) $(SRC) -o $(TARGET)
+$(TARGET): $(OBJ)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+obj/%.o: src/%.cpp
+	@mkdir -p obj
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 install: $(TARGET)
 	mkdir -p $(PREFIX)
@@ -26,6 +31,7 @@ install: $(TARGET)
 	@echo "Installation complete!"
 
 clean:
+	rm -rf obj/
 	rm -f $(TARGET)
 
 uninstall:

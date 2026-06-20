@@ -17,8 +17,9 @@ No configuration files. No GUI. One command.
 | **Smart Prefix Discovery** | Auto-detects existing prefixes from Steam, Heroic, Lutris |
 | **Flatpak Steam Support** | Scans both native and Flatpak Steam userdata |
 | **GE-Proton Priority** | Prefers GE-Proton → Experimental → Official Proton |
-| **Smart Icon Discovery** | Recursively picks best `.ico`/`.png` icon |
+| **Smart Icon Discovery** | Recursively picks best `.ico`/`.png` icon, or extracts directly from `.exe` files if `icoutils` is installed |
 | **Case-Insensitive Management** | `--delete`, `--replace-icon` work with partial names |
+| **Tab Completion** | Bash completion script included for all commands, flags, and existing entries |
 
 ---
 
@@ -103,10 +104,9 @@ For `.exe` files, Proton is selected in this priority order:
 
 ---
 
-## Roadmap / Known Limitations
+## Roadmap & Todo
 
-### Not Yet Implemented
-- [ ] **`.exe` icon extraction** — Icons baked inside `.exe` files cannot be extracted without a dependency (e.g. `icoextract`). Use `--icon` as a workaround.
+- [x] **`.exe` icon extraction** — Icons baked inside `.exe` files can be extracted directly if `icoutils` (`wrestool` + `icotool`) is installed.
 - [ ] **Steam Flatpak — Proton execution** — Flatpak Steam prefix *discovery* works. However, running a Proton binary that lives inside the Flatpak sandbox from outside it requires a `flatpak run` wrapper (not yet implemented). Native Steam Proton works fine.
 - [ ] **GOG Galaxy prefix detection** — GOG game prefixes are not yet auto-discovered (GOG uses its own config location).
 - [ ] **Standalone Wine prefix detection** — Wine prefixes created without Heroic or Lutris (e.g. raw `WINEPREFIX=...` usage) are not scanned.
@@ -116,9 +116,13 @@ For `.exe` files, Proton is selected in this priority order:
 - [ ] **`--runner wine` has no prefix management** — When `--runner wine` is passed manually, the `Exec=` is set to `wine "path/to/game.exe"` directly with no wrapper script and no prefix handling.
 - [ ] **Heroic JSON parsing is naive** — The Heroic parser does a simple string search for `"winePrefix":` in the file. If Heroic changes its JSON schema or uses nested configs it may miss the prefix.
 - [ ] **`sanitizeName` strips all special characters** — Game names with spaces, dots, or unicode (e.g. "DOOM (2016)") get heavily sanitized, making filenames like `DOOM2016` with no separator. A smarter slug function would preserve readability.
-
-### Known Bugs
 - [ ] **`--delete` and `--replace-icon` match on filename, not `Name=`** — Searching `"portal"` matches `dejatop_Portal.desktop` by filename. If the user names their entry something different from the filename (via `--name`), the lookup may fail or match the wrong entry.
+- [ ] **Library Batch Mode** — Add a `--batch` command to scan entire game directories (e.g., `~/GOG Games/`) and generate entries for all installed games in a single pass.
+- [ ] **Entry Management** — Add `--rename` to seamlessly change the name of existing entries, and `--update` to refresh the selected Proton version.
+- [ ] **Dry-Run Previews** — Add `--dry-run` to safely preview the generated desktop entry and wrapper script without writing anything to disk.
+- [ ] **Enhanced Launcher Discovery** — Improve detection logic for Heroic Games Launcher, Lutris, and standalone Wine prefixes.
+- [ ] **Custom Environment Variables** — Support reading Steam's per-game launch options, and add a `--env` flag to pass custom variables (like `MANGOHUD=1`) to any runner.
+- [ ] **Robustness & Validation** — Add strict verification using `desktop-file-validate` to ensure 100% standard compliance, and fix edge cases involving paths with special characters.
 
 ---
 

@@ -30,8 +30,10 @@ run through Wine or Steam Proton (including GE-Proton).
 .PP
 When passed a path to an executable, DejaTop will automatically detect
 the best runner, scan Steam (native and Flatpak), Heroic Games Launcher,
-and Lutris for an existing Proton prefix, pick the best available icon,
+and Lutris for an existing Proton prefix, pick the best available icon
+(or extract one dynamically from a .exe if icoutils is installed),
 and generate the desktop entry \[em] with zero user interaction needed.
+A bash completion script is also provided for seamless tab completion.
 .SH OPTIONS
 .TP
 .BR \-\-name " \fIname\fR"
@@ -119,8 +121,6 @@ Remove an entry:
 List all managed entries:
 .B dejatop --list
 .SH KNOWN ISSUES (BETA)
-.TP
-\(bu Windows .exe icon extraction is not yet supported. Use --icon to supply one manually.
 .TP
 \(bu Steam Flatpak GE-Proton: prefix discovery works, but running Proton from outside the Flatpak sandbox requires a flatpak-run wrapper (not yet implemented).
 .TP
