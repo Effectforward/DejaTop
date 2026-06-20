@@ -5,7 +5,10 @@
 #include <fstream>
 #include <algorithm>
 #include <cstdlib>
-#include <stdint.h>
+#include <cstdint>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 using namespace std;
@@ -84,6 +87,30 @@ vector<string> findProtonVersions() {
     return versions;
 }
 
+// Safe command execution using fork/execvp — no shell injection possible
+int runCommand(const vector<string>& args) {
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        // Child: build argv for execvp
+        vector<const char*> argv;
+        for (const auto& a : args) argv.push_back(a.c_str());
+        argv.push_back(nullptr);
+        // Silence stdout/stderr
+        freopen("/dev/null", "w", stdout);
+        freopen("/dev/null", "w", stderr);
+        execvp(argv[0], const_cast<char* const*>(argv.data()));
+        _exit(127); // execvp failed
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+bool commandExists(const string& cmd) {
+    return runCommand({"which", cmd}) == 0;
+}
+
 vector<string> findIcons(const string& execDir) {
     vector<string> bestIcons, goodIcons, okayIcons, badIcons;
 
@@ -118,6 +145,62 @@ vector<string> findIcons(const string& execDir) {
     for (const auto& p : okayIcons) allIcons.push_back(p);
     for (const auto& p : badIcons) allIcons.push_back(p);
     return allIcons;
+}
+
+// Extract icon from a Windows .exe using wrestool + icotool (icoutils)
+// Returns path to the extracted .png, or empty string on failure.
+string extractExeIcon(const string& execPath, const string& safeName) {
+    if (!commandExists("wrestool") || !commandExists("icotool")) return "";
+
+    string iconsDir = getHomeDir() + "/.local/share/DejaTop/icons";
+    fs::create_directories(iconsDir);
+
+    // Create a temporary working directory
+    string tmpBase = getHomeDir() + "/.local/share/DejaTop/.tmp_icon_" + safeName;
+    fs::create_directories(tmpBase);
+
+    // Step 1: Extract .ico resources from the .exe (resource type 14 = RT_GROUP_ICON)
+    int ret = runCommand({"wrestool", "-x", "-t", "14", execPath, "-o", tmpBase});
+    if (ret != 0) {
+        fs::remove_all(tmpBase);
+        return "";
+    }
+
+    // Step 2: Find the largest extracted .ico file (likely the highest quality)
+    string bestIco;
+    uintmax_t bestSize = 0;
+    try {
+        for (const auto& entry : fs::directory_iterator(tmpBase)) {
+            if (entry.is_regular_file() && toLower(entry.path().extension().string()) == ".ico") {
+                uintmax_t sz = entry.file_size();
+                if (sz > bestSize) {
+                    bestSize = sz;
+                    bestIco = entry.path().string();
+                }
+            }
+        }
+    } catch (...) {}
+
+    if (bestIco.empty()) {
+        fs::remove_all(tmpBase);
+        return "";
+    }
+
+    // Step 3: Convert .ico to .png using icotool, requesting the largest size available
+    string outPng = iconsDir + "/" + safeName + ".png";
+    ret = runCommand({"icotool", "-x", "-w", "256", "-o", outPng, bestIco});
+    if (ret != 0) {
+        // Retry without size constraint (some icons don't have 256px)
+        ret = runCommand({"icotool", "-x", "-o", outPng, bestIco});
+    }
+
+    // Cleanup temp directory
+    fs::remove_all(tmpBase);
+
+    if (ret == 0 && fs::exists(outPng)) {
+        return outPng;
+    }
+    return "";
 }
 
 string extractHeroicPrefix(const string& execPath) {
@@ -411,6 +494,14 @@ int main(int argc, char* argv[]) {
         if (icon.empty()) {
             auto icons = findIcons(execDir);
             if (!icons.empty()) icon = icons[0];
+        }
+        // If no icon found on disk and this is a .exe, try extracting from the binary
+        if (icon.empty() && execExt == ".exe") {
+            string extracted = extractExeIcon(execPath, safeName);
+            if (!extracted.empty()) {
+                icon = extracted;
+                cout << PROMPT_COLOR << "Extracted icon from .exe: " << icon << RESET << "\n";
+            }
         }
         
         string runner = customRunner;
