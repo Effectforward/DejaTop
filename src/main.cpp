@@ -14,7 +14,10 @@ void printHelp() {
     cout << "  --name <name>                       Override auto-detected name.\n";
     cout << "  --icon <path>                       Override auto-detected icon.\n";
     cout << "  --runner <native|wine|proton>       Override auto-detected runner.\n";
-    cout << "  --prefix <path>                     Override Wine/Proton prefix path.\n\n";
+    cout << "  --prefix <path>                     Override Wine/Proton prefix path.\n";
+    cout << "  --category <name>                   Override auto-detected category.\n";
+    cout << "  --env <KEY=VALUE>                   Pass environment variables (repeatable).\n";
+    cout << "  --force                             Overwrite existing entry.\n\n";
     cout << "Commands:\n";
     cout << "  --replace-icon <name> <icon_path>   Case-insensitively swap an icon.\n";
     cout << "  --delete <name>                     Delete an entry and its wrapper.\n";
@@ -68,6 +71,13 @@ int main(int argc, char* argv[]) {
     if (arg1 == "--replace-icon" && argc >= 4) {
         string query = argv[2];
         string iconPath = argv[3];
+        if (iconPath.find('/') != string::npos || iconPath.find('.') != string::npos) {
+            if (!fs::exists(iconPath)) {
+                cout << ERROR_COLOR << "Error: Icon file '" << iconPath << "' does not exist.\n" << RESET;
+                return 1;
+            }
+            iconPath = fs::canonical(iconPath).string();
+        }
         string dFile = findDesktopFile(query);
         if (dFile.empty()) {
             cout << ERROR_COLOR << "Error: No entry found matching '" << query << "'\n" << RESET;
@@ -114,21 +124,50 @@ int main(int argc, char* argv[]) {
         string customIcon = "";
         string customRunner = "";
         string customPrefix = "";
+        string customCategory = "";
+        vector<string> envVars;
+        bool force = false;
         
         for (int i=2; i<argc; i++) {
             string arg = argv[i];
             if (arg == "--name" && i+1 < argc) gameName = argv[++i];
-            else if (arg == "--icon" && i+1 < argc) customIcon = argv[++i];
+            else if (arg == "--icon" && i+1 < argc) {
+                string tempIcon = argv[++i];
+                if (tempIcon.find('/') != string::npos || tempIcon.find('.') != string::npos) {
+                    if (!fs::exists(tempIcon)) {
+                        cout << ERROR_COLOR << "Error: Icon file '" << tempIcon << "' does not exist.\n" << RESET;
+                        return 1;
+                    }
+                    customIcon = fs::canonical(tempIcon).string();
+                } else {
+                    customIcon = tempIcon;
+                }
+            }
             else if (arg == "--runner" && i+1 < argc) customRunner = argv[++i];
             else if (arg == "--prefix" && i+1 < argc) customPrefix = argv[++i];
+            else if (arg == "--category" && i+1 < argc) customCategory = argv[++i];
+            else if (arg == "--env" && i+1 < argc) envVars.push_back(argv[++i]);
+            else if (arg == "--force") force = true;
         }
         
         string safeName = sanitizeName(gameName);
+        if (safeName.empty()) {
+            cout << ERROR_COLOR << "Error: Parsed name is empty. Please provide a valid --name.\n" << RESET;
+            return 1;
+        }
+
+        string appsDir = (fs::path(getHomeDir()) / ".local" / "share" / "applications").string();
+        string desktopPath = (fs::path(appsDir) / ("dejatop_" + safeName + ".desktop")).string();
+        if (fs::exists(desktopPath) && !force) {
+            cout << ERROR_COLOR << "Error: Entry for '" << safeName << "' already exists. Use --force to overwrite.\n" << RESET;
+            return 1;
+        }
+
         cout << TITLE_COLOR << "Processing " << gameName << "...\n" << RESET;
         
         string icon = customIcon;
         if (icon.empty()) {
-            auto icons = findIcons(execDir);
+            auto icons = findIcons(execDir, gameName);
             if (!icons.empty()) icon = icons[0];
         }
         // If no icon found on disk and this is a .exe, try extracting from the binary
@@ -146,11 +185,26 @@ int main(int argc, char* argv[]) {
             else runner = "proton";
         }
         
+        string category = customCategory;
+        if (category.empty()) {
+            if (runner == "native") category = "Utility;Application;";
+            else category = "Game;";
+        }
+        
         string finalExec;
+        string envPrefix;
+        if (!envVars.empty()) {
+            envPrefix = "env ";
+            for (const auto& env : envVars) {
+                envPrefix += escapeBash(env) + " ";
+            }
+        }
+
         if (runner == "native") {
-            finalExec = "\"" + execPath + "\"";
+            fs::permissions(execPath, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add);
+            finalExec = envPrefix + "\"" + execPath + "\"";
         } else if (runner == "wine") {
-            finalExec = "wine \"" + execPath + "\"";
+            finalExec = envPrefix + "wine \"" + execPath + "\"";
         } else {
             auto protons = findProtonVersions();
             if (protons.empty()) {
@@ -174,15 +228,26 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 
-                string wrapperPath = createWrapper(safeName, execDir, execPath, protons[0], prefix);
+                string launchOptions = extractSteamLaunchOptions(execPath);
+                string wrapperPath = createWrapper(safeName, execDir, execPath, protons[0], prefix, envVars, launchOptions);
                 finalExec = wrapperPath;
             }
         }
         
-        if (!generateDesktop(gameName, safeName, finalExec, execDir, icon)) {
+        if (!generateDesktop(gameName, safeName, finalExec, execDir, icon, category)) {
             cout << ERROR_COLOR << "Failed to write desktop entry.\n" << RESET;
             return 1;
         }
+        
+        if (commandExists("desktop-file-validate")) {
+            if (runCommand({"desktop-file-validate", desktopPath}) != 0) {
+                cout << ERROR_COLOR << "Warning: desktop-file-validate found issues with the generated entry.\n" << RESET;
+            }
+        }
+        if (commandExists("update-desktop-database")) {
+            (void)runCommand({"update-desktop-database", appsDir});
+        }
+        
         cout << SUCCESS_COLOR << "✔ Desktop entry created successfully!\n" << RESET;
         return 0;
     }

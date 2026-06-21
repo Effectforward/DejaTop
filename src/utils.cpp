@@ -20,6 +20,30 @@ string toLower(string s) {
     return s;
 }
 
+string stripNewlines(string s) {
+    s.erase(std::remove(s.begin(), s.end(), '\n'), s.end());
+    s.erase(std::remove(s.begin(), s.end(), '\r'), s.end());
+    return s;
+}
+
+string escapeBash(const string& s) {
+    string res;
+    for (char c : s) {
+        if (c == '"' || c == '`' || c == '$' || c == '\\') res += '\\';
+        res += c;
+    }
+    return res;
+}
+
+string escapeDesktop(const string& s) {
+    string res;
+    for (char c : s) {
+        if (c == '%') res += "%%";
+        else res += c;
+    }
+    return res;
+}
+
 [[nodiscard]] int runCommand(const vector<string>& args) {
     if (args.empty()) return EXEC_FORK_FAILED;
     pid_t pid = fork();
@@ -53,6 +77,29 @@ string runCommandOutput(const string& cmd) {
 }
 
 bool commandExists(const string& cmd) {
-    return runCommand({"which", cmd}) == EXEC_SUCCESS;
+    if (cmd.empty()) return false;
+
+    if (cmd.find('/') != string::npos) {
+        return access(cmd.c_str(), X_OK) == 0;
+    }
+
+    const char* pathEnv = getenv("PATH");
+    if (!pathEnv || !*pathEnv) return false;
+
+    string pathValue(pathEnv);
+    size_t start = 0;
+    while (start <= pathValue.size()) {
+        size_t end = pathValue.find(':', start);
+        string dir = pathValue.substr(start, end == string::npos ? string::npos : end - start);
+        if (dir.empty()) dir = ".";
+
+        fs::path candidate = fs::path(dir) / cmd;
+        if (access(candidate.c_str(), X_OK) == 0) return true;
+
+        if (end == string::npos) break;
+        start = end + 1;
+    }
+
+    return false;
 }
 
