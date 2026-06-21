@@ -1,5 +1,105 @@
 #include "../include/discovery.hpp"
+#include <cctype>
 #include <sstream>
+
+namespace {
+
+vector<int> parseProtonVersionKey(const string& name) {
+    vector<int> parts;
+    int current = -1;
+
+    for (char ch : name) {
+        if (isdigit(static_cast<unsigned char>(ch))) {
+            if (current < 0) current = 0;
+            current = current * 10 + (ch - '0');
+        } else if (current >= 0) {
+            parts.push_back(current);
+            current = -1;
+        }
+    }
+
+    if (current >= 0) parts.push_back(current);
+    return parts;
+}
+
+int compareProtonVersionKeys(const vector<int>& a, const vector<int>& b) {
+    size_t count = std::max(a.size(), b.size());
+    for (size_t i = 0; i < count; ++i) {
+        int left = i < a.size() ? a[i] : -1;
+        int right = i < b.size() ? b[i] : -1;
+        if (left != right) return left > right ? 1 : -1;
+    }
+    return 0;
+}
+
+bool isCommentOrBlank(const string& line) {
+    for (char ch : line) {
+        if (!isspace(static_cast<unsigned char>(ch))) {
+            return ch == '#';
+        }
+    }
+    return true;
+}
+
+bool startsWithIndentKey(const string& line, const string& key) {
+    size_t pos = 0;
+    while (pos < line.size() && isspace(static_cast<unsigned char>(line[pos]))) ++pos;
+    return line.compare(pos, key.size(), key) == 0;
+}
+
+size_t leadingIndentCount(const string& line) {
+    size_t pos = 0;
+    while (pos < line.size() && isspace(static_cast<unsigned char>(line[pos]))) ++pos;
+    return pos;
+}
+
+string unescapeJsonString(const string& value) {
+    string result;
+    result.reserve(value.size());
+    bool escape = false;
+    for (char ch : value) {
+        if (escape) {
+            result += ch;
+            escape = false;
+        } else if (ch == '\\') {
+            escape = true;
+        } else {
+            result += ch;
+        }
+    }
+    return result;
+}
+
+string extractQuotedJsonValue(const string& content, const string& key) {
+    size_t keyPos = content.find(key);
+    if (keyPos == string::npos) return "";
+
+    size_t colonPos = content.find(':', keyPos + key.size());
+    if (colonPos == string::npos) return "";
+
+    size_t quoteStart = content.find('"', colonPos + 1);
+    if (quoteStart == string::npos) return "";
+
+    string value;
+    bool escape = false;
+    for (size_t i = quoteStart + 1; i < content.size(); ++i) {
+        char ch = content[i];
+        if (escape) {
+            value += ch;
+            escape = false;
+        } else if (ch == '\\') {
+            escape = true;
+        } else if (ch == '"') {
+            return value;
+        } else {
+            value += ch;
+        }
+    }
+
+    return "";
+}
+
+} // namespace
 
 bool protonSortCompare(const string& a, const string& b) {
     string nameA = toLower(fs::path(a).filename().string());
@@ -13,7 +113,12 @@ bool protonSortCompare(const string& a, const string& b) {
     bool bExp = nameB.find("experimental") != string::npos;
     if (aExp != bExp) return aExp;
     
-    return nameA > nameB; // Descending for normal versions (e.g. Proton 9.0 > Proton 8.0)
+    vector<int> versionA = parseProtonVersionKey(nameA);
+    vector<int> versionB = parseProtonVersionKey(nameB);
+    int versionCompare = compareProtonVersionKeys(versionA, versionB);
+    if (versionCompare != 0) return versionCompare > 0;
+
+    return nameA > nameB;
 }
 
 vector<string> findProtonVersions() {
@@ -35,7 +140,17 @@ vector<string> findProtonVersions() {
                     string name = entry.path().filename().string();
                     if (name.find("Proton") != string::npos || name.find("proton") != string::npos) {
                         if (fs::exists(entry.path() / "proton")) {
-                            versions.push_back(entry.path().string());
+                            try {
+                                string canonicalPath = fs::canonical(entry.path()).string();
+                                if (find(versions.begin(), versions.end(), canonicalPath) == versions.end()) {
+                                    versions.push_back(canonicalPath);
+                                }
+                            } catch (const fs::filesystem_error&) {
+                                string rawPath = entry.path().string();
+                                if (find(versions.begin(), versions.end(), rawPath) == versions.end()) {
+                                    versions.push_back(rawPath);
+                                }
+                            }
                         }
                     }
                 }
@@ -46,114 +161,222 @@ vector<string> findProtonVersions() {
     return versions;
 }
 
-void getPngDimensions(const string& path, int& w, int& h) {
-    w = 0; h = 0;
+// ---------------------------------------------------------------------------
+// Image header parsing (PNG + ICO)
+// ---------------------------------------------------------------------------
+
+ImageInfo getPngInfo(const string& path) {
+    ImageInfo info;
     ifstream in(path, ios::binary);
-    if (!in) return;
-    char sig[8];
-    if (!in.read(sig, 8)) return;
-    if (static_cast<unsigned char>(sig[0]) != 137 || sig[1] != 80 || sig[2] != 78 || sig[3] != 71 ||
-        sig[4] != 13 || sig[5] != 10 || sig[6] != 26 || sig[7] != 10) return;
-    char chunk[8];
-    if (!in.read(chunk, 8)) return;
-    if (chunk[4] != 'I' || chunk[5] != 'H' || chunk[6] != 'D' || chunk[7] != 'R') return;
-    char dims[8];
-    if (!in.read(dims, 8)) return;
-    w = (static_cast<unsigned char>(dims[0]) << 24) | (static_cast<unsigned char>(dims[1]) << 16) |
-        (static_cast<unsigned char>(dims[2]) << 8) | static_cast<unsigned char>(dims[3]);
-    h = (static_cast<unsigned char>(dims[4]) << 24) | (static_cast<unsigned char>(dims[5]) << 16) |
-        (static_cast<unsigned char>(dims[6]) << 8) | static_cast<unsigned char>(dims[7]);
+    if (!in) return info;
+
+    unsigned char sig[8];
+    if (!in.read(reinterpret_cast<char*>(sig), 8)) return info;
+    static const unsigned char pngSig[8] = {137,80,78,71,13,10,26,10};
+    if (!std::equal(sig, sig+8, pngSig)) return info;
+
+    unsigned char chunk[8];
+    if (!in.read(reinterpret_cast<char*>(chunk), 8)) return info;
+    if (chunk[4] != 'I' || chunk[5] != 'H' || chunk[6] != 'D' || chunk[7] != 'R') return info;
+
+    unsigned char dims[8];
+    if (!in.read(reinterpret_cast<char*>(dims), 8)) return info;
+    info.width  = (dims[0] << 24) | (dims[1] << 16) | (dims[2] << 8) | dims[3];
+    info.height = (dims[4] << 24) | (dims[5] << 16) | (dims[6] << 8) | dims[7];
+
+    info.valid = (info.width > 0 && info.height > 0);
+    return info;
 }
 
-int getIconScore(const string& path, const string& gameName) {
+ImageInfo getIcoInfo(const string& path) {
+    ImageInfo info;
+    ifstream in(path, ios::binary);
+    if (!in) return info;
+
+    unsigned char header[6];
+    if (!in.read(reinterpret_cast<char*>(header), 6)) return info;
+    uint16_t reserved = header[0] | (header[1] << 8);
+    uint16_t type     = header[2] | (header[3] << 8);
+    uint16_t count    = header[4] | (header[5] << 8);
+    if (reserved != 0 || type != 1 || count == 0) return info;
+
+    int bestArea = -1;
+    for (uint16_t i = 0; i < count; ++i) {
+        unsigned char entry[16];
+        if (!in.read(reinterpret_cast<char*>(entry), 16)) break;
+        int w = entry[0] == 0 ? 256 : entry[0];
+        int h = entry[1] == 0 ? 256 : entry[1];
+        int bpp = entry[6] | (entry[7] << 8);
+        int area = w * h;
+        if (area > bestArea) {
+            bestArea = area;
+            info.width = w;
+            info.height = h;
+            info.bitsPerPixel = bpp;
+            info.valid = true;
+        }
+    }
+    return info;
+}
+
+// ---------------------------------------------------------------------------
+// Icon scoring
+// ---------------------------------------------------------------------------
+
+int getIconScore(const fs::path& path, const string& gameName, const fs::path& execDir) {
     int score = 0;
-    string pathLower = toLower(path);
-    string fLower = toLower(fs::path(path).filename().string());
-    string gLower = toLower(gameName);
-    string extLower = toLower(fs::path(path).extension().string());
+    const string pathLower = toLower(path.string());
+    const string fLower    = toLower(path.filename().string());
+    const string gLower    = toLower(gameName);
+    const string extLower  = toLower(path.extension().string());
 
-    if (extLower == ".svg") score += 100;
-    else if (extLower == ".png") score += 80;
-    else if (extLower == ".ico") score += 40;
-    else if (extLower == ".xpm") score += 20;
+    // 3.1 Format base score
+    if      (extLower == ".svg")  score += 100;
+    else if (extLower == ".png")  score += 80;
+    else if (extLower == ".ico")  score += 40;
+    else if (extLower == ".xpm")  score += 20;
+    else if (extLower == ".jpg" || extLower == ".jpeg") score += 10;
 
-    if (extLower == ".png") {
-        int w = 0, h = 0;
-        getPngDimensions(path, w, h);
-        if (w > 0 && h > 0) {
-            if (w == h) score += 30;
-            else score -= 20;
-            if (w >= 512 && h >= 512) score += 40;
-            else if (w >= 256 && h >= 256) score += 30;
-            else if (w >= 128 && h >= 128) score += 20;
-            else if (w >= 64 && h >= 64) score += 10;
+    // 3.2 Dimension / bit-depth score
+    ImageInfo info;
+    if (extLower == ".png") info = getPngInfo(path.string());
+    else if (extLower == ".ico") info = getIcoInfo(path.string());
+
+    if (info.valid) {
+        if (info.width == info.height) score += 30;
+        else score -= 20;
+
+        if      (info.width >= 512) score += 40;
+        else if (info.width >= 256) score += 30;
+        else if (info.width >= 128) score += 20;
+        else if (info.width >= 64)  score += 10;
+        else if (info.width > 0 && info.width < 32) score -= 10;
+
+        if (info.bitsPerPixel > 0) {
+            if (info.bitsPerPixel <= 1) score -= 40;
+            else if (info.bitsPerPixel <= 4) score -= 20;
         }
     }
 
+    // 3.3 Filename match against gameName
     string fBase = fLower.substr(0, fLower.find_last_of('.'));
-    if (fBase == gLower && !gLower.empty()) score += 100;
+    if (!gLower.empty() && fBase == gLower) score += 100;
     else if (!gLower.empty() && fLower.find(gLower) != string::npos) score += 50;
 
-    if (fLower == "icon.png" || fLower == "logo.svg" || fLower == "icon.svg" || fLower == "logo.png") score += 60;
+    // 3.4 Generic icon/logo filename convention
+    if (fLower == "icon.png" || fLower == "icon.svg" || fLower == "logo.png" || fLower == "logo.svg") score += 60;
     else if (fLower.find("icon") != string::npos || fLower.find("logo") != string::npos) score += 20;
 
-    if (pathLower.find("/icons/") != string::npos || pathLower.find("/pixmaps/") != string::npos || pathLower.find("/hicolor/") != string::npos) score += 40;
+    // 3.5 Icon-theme directory convention
+    if (pathLower.find("/icons/") != string::npos ||
+        pathLower.find("/pixmaps/") != string::npos ||
+        pathLower.find("/hicolor/") != string::npos) score += 40;
 
-    string parentDir = toLower(fs::path(path).parent_path().filename().string());
-    if (parentDir == gLower && !gLower.empty()) score += 20;
+    // 3.5b Filename-convention fallback for low-quality variants
+    static const vector<string> qualityPenalties = {"1bpp","_bw","_mono","_lowres","_small"};
+    for (const auto& m : qualityPenalties) if (fLower.find(m) != string::npos) score -= 30;
 
-    vector<string> uiPenalties = {"button", "ui", "hud", "menu", "cursor", "banner", "header", "hero", "bg", "background"};
-    for (const auto& p : uiPenalties) if (pathLower.find(p) != string::npos) score -= 50;
-    vector<string> gamePenalties = {"weapon", "item", "skill", "sprite", "texture", "atlas", "char", "portrait"};
-    for (const auto& p : gamePenalties) if (pathLower.find(p) != string::npos) score -= 50;
-    vector<string> sysPenalties = {"crash", "unins", "setup", "redist", "steam_api"};
-    for (const auto& p : sysPenalties) if (pathLower.find(p) != string::npos) score -= 100;
+    // 3.6 Ancestor path match — bounded at execDir (BUG-34 fix)
+    if (!gLower.empty()) {
+        fs::path p = path.parent_path();
+        fs::path stopAt = execDir;
+        while (!p.empty() && p != stopAt && p.has_filename()) {
+            if (toLower(p.filename().string()) == gLower) {
+                score += 50;
+                break;
+            }
+            p = p.parent_path();
+        }
+    }
+
+    // 3.7 Negative signal categories
+    static const vector<string> uiMarkers = {"button","ui","hud","menu","cursor","banner","header","hero","bg","background"};
+    static const vector<string> assetMarkers = {"weapon","item","skill","sprite","texture","atlas","char","portrait"};
+    static const vector<string> systemMarkers = {"crash","unins","setup","redist","steam_api"};
+
+    for (const auto& m : uiMarkers)     if (pathLower.find(m) != string::npos) score -= 50;
+    for (const auto& m : assetMarkers)  if (pathLower.find(m) != string::npos) score -= 50;
+    for (const auto& m : systemMarkers) if (pathLower.find(m) != string::npos) score -= 100;
 
     return score;
 }
 
-vector<string> findIcons(const string& execDir) {
-    string cmd = "find \"" + execDir + "\" -type f \\( -iname \"*.desktop\" -o -iname \"*.svg\" -o -iname \"*.png\" -o -iname \"*.ico\" -o -iname \"*.xpm\" \\)";
-    string out = runCommandOutput(cmd);
-    vector<string> files;
-    std::stringstream ss(out);
-    string line;
-    while (std::getline(ss, line)) {
-        if (!line.empty()) files.push_back(line);
-    }
+// ---------------------------------------------------------------------------
+// Candidate collection (hard exclusion, no shell)
+// ---------------------------------------------------------------------------
 
+static bool isExcludedPath(const string& pathLower) {
+    return pathLower.find("steam-runtime") != string::npos ||
+           pathLower.find("/usr/") != string::npos ||
+           pathLower.find("/help/") != string::npos;
+}
+
+static bool hasIconExtension(const fs::path& p) {
+    static const vector<string> exts = {".desktop",".svg",".png",".ico",".xpm",".jpg",".jpeg"};
+    string ext = toLower(p.extension().string());
+    return std::find(exts.begin(), exts.end(), ext) != exts.end();
+}
+
+static vector<fs::path> collectCandidates(const fs::path& execDir) {
+    vector<fs::path> files;
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(execDir, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) continue;
+        if (!it->is_regular_file(ec)) continue;
+        if (!hasIconExtension(it->path())) continue;
+        if (isExcludedPath(toLower(it->path().string()))) continue;
+        files.push_back(it->path());
+    }
+    return files;
+}
+
+// ---------------------------------------------------------------------------
+// findIcons — the full pipeline
+// ---------------------------------------------------------------------------
+
+constexpr int WINNING_SCORE_THRESHOLD = 50;
+
+vector<string> findIcons(const string& execDir, const string& gameName) {
+    vector<fs::path> files = collectCandidates(execDir);
+
+    // Stage 2: .desktop shortcut check
     for (const auto& f : files) {
-        if (toLower(fs::path(f).extension().string()) == ".desktop") {
-            ifstream in(f);
-            string dline, targetIcon = "";
-            while (std::getline(in, dline)) {
-                if (dline.find("Icon=") == 0) {
-                    targetIcon = dline.substr(5);
-                    break;
-                }
-            }
-            if (!targetIcon.empty()) {
-                if (fs::exists(targetIcon)) return {targetIcon};
-                for (const auto& sf : files) {
-                    string sname = fs::path(sf).filename().string();
-                    if (sname == targetIcon || sname == targetIcon + ".png" || sname == targetIcon + ".svg") return {sf};
-                }
-            }
+        if (toLower(f.extension().string()) != ".desktop") continue;
+        ifstream in(f);
+        string line, targetIcon;
+        while (std::getline(in, line)) {
+            if (line.rfind("Icon=", 0) == 0) { targetIcon = line.substr(5); break; }
+        }
+        if (targetIcon.empty()) continue;
+        if (fs::exists(targetIcon)) return {targetIcon};
+        for (const auto& sf : files) {
+            string sname = sf.filename().string();
+            if (sname == targetIcon || sname == targetIcon + ".png" || sname == targetIcon + ".svg")
+                return {sf.string()};
         }
     }
 
-    string gameName = fs::path(execDir).filename().string();
-    vector<std::pair<string, int>> scored;
+    // Stage 3+4: score and stable-sort
+    vector<std::pair<fs::path,int>> scored;
     for (const auto& f : files) {
-        if (toLower(fs::path(f).extension().string()) != ".desktop") {
-            scored.push_back({f, getIconScore(f, gameName)});
-        }
+        if (toLower(f.extension().string()) == ".desktop") continue;
+        scored.push_back({f, getIconScore(f, gameName, execDir)});
     }
-    sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
 
-    vector<string> ret;
-    for (const auto& s : scored) ret.push_back(s.first);
-    return ret;
+    std::stable_sort(scored.begin(), scored.end(),
+        [](const auto& a, const auto& b) { return a.second > b.second; });
+
+    // Stage 5: low-confidence warning
+    if (!scored.empty() && scored[0].second < WINNING_SCORE_THRESHOLD) {
+        cout << PROMPT_COLOR << "No strong game-specific icon match found.\n" << RESET;
+        cout << PROMPT_COLOR << "Using best available candidate: " << scored[0].first.string() << "\n" << RESET;
+        cout << PROMPT_COLOR << "Override with --icon <path> if this isn't right.\n" << RESET;
+    }
+
+    vector<string> ranked;
+    for (const auto& s : scored) ranked.push_back(s.first.string());
+    return ranked;
 }
 
 string extractExeIcon(const string& execPath, const string& safeName) {
@@ -162,8 +385,10 @@ string extractExeIcon(const string& execPath, const string& safeName) {
     string iconsDir = (fs::path(getHomeDir()) / ".local" / "share" / "DejaTop" / "icons").string();
     fs::create_directories(iconsDir);
 
-    string tmpBase = (fs::path(getHomeDir()) / ".local" / "share" / "DejaTop" / (".tmp_icon_" + safeName)).string();
-    fs::create_directories(tmpBase);
+    string templatePath = (fs::path(getHomeDir()) / ".local" / "share" / "DejaTop" / ".tmp_icon_XXXXXX").string();
+    char* tmpDir = mkdtemp(templatePath.data());
+    if (!tmpDir) return "";
+    string tmpBase = tmpDir;
 
     int ret = runCommand({"wrestool", "-x", "-t", "14", execPath, "-o", tmpBase});
     if (ret != 0) {
@@ -227,13 +452,9 @@ string extractHeroicPrefix(const string& execPath) {
             ifstream in(entry.path());
             string content((istreambuf_iterator<char>(in)), istreambuf_iterator<char>());
             if (content.find(execPath) != string::npos) {
-                size_t pos = content.find("\"winePrefix\": \"");
-                if (pos != string::npos) {
-                    pos += 15;
-                    size_t end = content.find("\"", pos);
-                    if (end != string::npos) {
-                        return content.substr(pos, end - pos);
-                    }
+                string prefix = extractQuotedJsonValue(content, "\"winePrefix\"");
+                if (!prefix.empty()) {
+                    return unescapeJsonString(prefix);
                 }
             }
         }
@@ -251,10 +472,28 @@ string extractLutrisPrefix(const string& execPath) {
             string line;
             bool foundExe = false;
             string foundPrefix = "";
+            size_t targetIndent = 0;
+            bool inTargetBlock = false;
             while (getline(in, line)) {
-                if (line.find(execPath) != string::npos) foundExe = true;
-                size_t ppos = line.find("prefix: ");
-                if (ppos != string::npos) foundPrefix = line.substr(ppos + 8);
+                if (isCommentOrBlank(line)) continue;
+                size_t indent = leadingIndentCount(line);
+                if (foundExe && inTargetBlock && indent < targetIndent) {
+                    break;
+                }
+                if (line.find(execPath) != string::npos) {
+                    foundExe = true;
+                    inTargetBlock = true;
+                    targetIndent = indent;
+                }
+                if (inTargetBlock && startsWithIndentKey(line, "prefix:")) {
+                    size_t ppos = line.find(':');
+                    if (ppos != string::npos) {
+                        foundPrefix = line.substr(ppos + 1);
+                        while (!foundPrefix.empty() && isspace(static_cast<unsigned char>(foundPrefix.front()))) {
+                            foundPrefix.erase(foundPrefix.begin());
+                        }
+                    }
+                }
             }
             if (foundExe && !foundPrefix.empty()) {
                 if (!foundPrefix.empty() && foundPrefix.back() == '\r') foundPrefix.pop_back();
@@ -340,6 +579,46 @@ string findDesktopFile(const string& query) {
             }
         }
     }
+    return "";
+}
+
+string extractSteamLaunchOptions(const string& execPath) {
+    string home = getHomeDir();
+    vector<string> userdataDirs = {
+        (fs::path(home) / ".local" / "share" / "Steam" / "userdata").string(),
+        (fs::path(home) / ".var" / "app" / "com.valvesoftware.Steam" / "data" / "Steam" / "userdata").string()
+    };
+
+    for (const auto& userdataDir : userdataDirs) {
+        if (!fs::exists(userdataDir)) continue;
+
+        for (const auto& userEntry : fs::directory_iterator(userdataDir)) {
+            if (!userEntry.is_directory()) continue;
+
+            string vdfPath = (userEntry.path() / "config" / "shortcuts.vdf").string();
+            if (!fs::exists(vdfPath)) continue;
+
+            ifstream in(vdfPath, ios::binary);
+            string data((istreambuf_iterator<char>(in)), istreambuf_iterator<char>());
+
+            size_t exePos = data.find(execPath);
+            if (exePos == string::npos) continue;
+
+            size_t optionsPos = data.find("LaunchOptions", exePos);
+            if (optionsPos == string::npos) continue;
+
+            size_t valueStart = data.find('\0', optionsPos);
+            if (valueStart == string::npos || valueStart + 1 >= data.size()) continue;
+            ++valueStart;
+
+            size_t valueEnd = valueStart;
+            while (valueEnd < data.size() && data[valueEnd] != '\0') ++valueEnd;
+            if (valueEnd > valueStart) {
+                return data.substr(valueStart, valueEnd - valueStart);
+            }
+        }
+    }
+
     return "";
 }
 
