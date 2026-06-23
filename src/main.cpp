@@ -19,6 +19,7 @@ void printHelp() {
     cout << "  --env <KEY=VALUE>                   Pass environment variables (repeatable).\n";
     cout << "  --force                             Overwrite existing entry.\n\n";
     cout << "Commands:\n";
+    cout << "  --show <name>                       Show details of a managed entry.\n";
     cout << "  --replace-icon <name> <icon_path>   Case-insensitively swap an icon.\n";
     cout << "  --delete <name>                     Delete an entry and its wrapper.\n";
     cout << "  --list                              List managed entries.\n";
@@ -55,6 +56,125 @@ int main(int argc, char* argv[]) {
             }
         }
         if (!found) cout << "  No entries found.\n";
+        return 0;
+    }
+    if (arg1 == "--show" && argc >= 3) {
+        string query = argv[2];
+        string dFile = findDesktopFile(query);
+        if (dFile.empty()) {
+            cout << ERROR_COLOR << "Error: No entry found matching '" << query << "'\n" << RESET;
+            return 1;
+        }
+
+        // Parse .desktop file
+        ifstream in(dFile);
+        if (!in.is_open()) {
+            cout << ERROR_COLOR << "Error: Cannot read " << dFile << "\n" << RESET;
+            return 1;
+        }
+        string name, exec, icon, category, path;
+        {
+            string line;
+            while (getline(in, line)) {
+                if (line.rfind("Name=",       0) == 0) name     = line.substr(5);
+                if (line.rfind("Exec=",       0) == 0) exec     = line.substr(5);
+                if (line.rfind("Icon=",       0) == 0) icon     = line.substr(5);
+                if (line.rfind("Categories=", 0) == 0) category = line.substr(11);
+                if (line.rfind("Path=",       0) == 0) path     = line.substr(5);
+            }
+        }
+        in.close();
+
+        // Unescape %% -> % in icon/exec for display (escapeDesktop wrote them as %%)
+        auto unescapeDesktop = [](const string& s) {
+            string out;
+            for (size_t i = 0; i < s.size(); ++i) {
+                if (s[i] == '%' && i + 1 < s.size() && s[i+1] == '%') { out += '%'; ++i; }
+                else out += s[i];
+            }
+            return out;
+        };
+        string iconDisplay = unescapeDesktop(icon);
+        string execDisplay = unescapeDesktop(exec);
+
+        // Derive wrapper and log paths from Name= (same logic as creation)
+        string safeName = sanitizeName(name);
+        string wrapperDir = (fs::path(getHomeDir()) / ".local" / "share" / "DejaTop" / "wrappers").string();
+        string logDir     = (fs::path(getHomeDir()) / ".local" / "share" / "DejaTop" / "logs").string();
+        string wrapperPath = (fs::path(wrapperDir) / (safeName + "_wrapper.sh")).string();
+        string logPath     = (fs::path(logDir)     / (safeName + ".log")).string();
+
+        // Header
+        cout << TITLE_COLOR << BOLD << "DejaTop Entry: " << name << RESET << "\n";
+        cout << string(40, '-') << "\n";
+        cout << "  Desktop:    " << dFile << "\n";
+        cout << "  Name:       " << name << "\n";
+        cout << "  Category:   " << category << "\n";
+        cout << "  Exec:       " << execDisplay << "\n";
+        if (!path.empty()) cout << "  Path:       " << path << "\n";
+
+        // Icon with existence check
+        if (!iconDisplay.empty()) {
+            bool iconOk = fs::exists(iconDisplay);
+            cout << "  Icon:       " << iconDisplay;
+            if (iconOk) cout << "  " << SUCCESS_COLOR << "\xe2\x9c\x94" << RESET;
+            else        cout << "  " << ERROR_COLOR << "\xe2\x9c\x98 (missing \xe2\x80\x94 use --replace-icon to fix)" << RESET;
+            cout << "\n";
+        }
+
+        // Wrapper: present if Exec= references the wrapper dir
+        if (execDisplay.find(wrapperDir) != string::npos) {
+            if (fs::exists(wrapperPath)) {
+                cout << "  Wrapper:    " << wrapperPath
+                     << "  " << SUCCESS_COLOR << "\xe2\x9c\x94" << RESET << "\n";
+
+                // Parse wrapper for prefix and proton path
+                ifstream wf(wrapperPath);
+                string wline;
+                string parsedPrefix, parsedProton;
+                while (getline(wf, wline)) {
+                    // STEAM_COMPAT_DATA_PATH="<path>"
+                    if (wline.rfind("export STEAM_COMPAT_DATA_PATH=", 0) == 0) {
+                        size_t q1 = wline.find('"');
+                        size_t q2 = wline.rfind('"');
+                        if (q1 != string::npos && q2 != q1)
+                            parsedPrefix = wline.substr(q1 + 1, q2 - q1 - 1);
+                    }
+                    // "<proton>/proton" run "<exe>"
+                    if (wline.find("/proton\" run") != string::npos) {
+                        size_t q1 = wline.find('"');
+                        size_t q2 = wline.find("/proton\"");
+                        if (q1 != string::npos && q2 != string::npos && q2 > q1)
+                            parsedProton = wline.substr(q1 + 1, q2 - q1 - 1);
+                    }
+                }
+                wf.close();
+                if (!parsedProton.empty()) cout << "    Proton:   " << parsedProton << "\n";
+                if (!parsedPrefix.empty()) cout << "    Prefix:   " << parsedPrefix << "\n";
+            } else {
+                cout << "  Wrapper:    " << wrapperPath
+                     << "  " << ERROR_COLOR << "\xe2\x9c\x98 (missing \xe2\x80\x94 re-run dejatop to regenerate)" << RESET << "\n";
+            }
+        } else {
+            cout << "  Wrapper:    " << PROMPT_COLOR << "(none \xe2\x80\x94 native runner)" << RESET << "\n";
+        }
+
+        // Log
+        if (fs::exists(logPath)) {
+            cout << "  Log:        " << logPath;
+            std::error_code ec;
+            uintmax_t sz = fs::file_size(logPath, ec);
+            if (!ec) {
+                if (sz == 0)               cout << "  (empty)";
+                else if (sz < 1024)        cout << "  (" << sz << " B)";
+                else if (sz < 1024*1024)   cout << "  (" << sz / 1024 << " KB)";
+                else                       cout << "  (" << sz / (1024*1024) << " MB)";
+            }
+            cout << "\n";
+        } else {
+            cout << "  Log:        " << PROMPT_COLOR << "(none)" << RESET << "\n";
+        }
+
         return 0;
     }
     if (arg1 == "--delete" && argc >= 3) {
