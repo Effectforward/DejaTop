@@ -1,12 +1,12 @@
 # bash completion for dejatop                              -*- shell-script -*-
 
 _dejatop_completions() {
-    local cur prev opts commands runners
+    local cur prev opts runners
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    opts="--name --icon --runner --prefix --category --env --force --replace-icon --delete --show --list --version --help"
+    opts="--name --icon --runner --prefix --category --env --force --show --rename --update --replace-icon --delete --list --version --help"
     runners="native wine proton"
 
     case "${prev}" in
@@ -15,51 +15,74 @@ _dejatop_completions() {
             return 0
             ;;
         --icon|--prefix)
-            # File/directory completion
+            # IFS=$'\n' prevents splitting on spaces in filenames/paths
+            local IFS=$'\n'
             COMPREPLY=( $(compgen -f -- "${cur}") )
             compopt -o filenames 2>/dev/null
             return 0
             ;;
         --name|--category|--env)
-            # Free text, no completion
             return 0
             ;;
-        --delete|--replace-icon|--show)
-            # Complete from existing dejatop entries (by Name= field when readable,
-            # falling back to sanitized filename)
-            local entries=""
-            local apps_dir="${HOME}/.local/share/applications"
-            if [[ -d "${apps_dir}" ]]; then
-                for f in "${apps_dir}"/dejatop_*.desktop; do
-                    [[ -f "$f" ]] || continue
-                    # Try to read Name= from the file for a human-readable completion
-                    local display_name
-                    display_name=$(grep -m1 "^Name=" "$f" 2>/dev/null | cut -d= -f2-)
-                    if [[ -n "${display_name}" ]]; then
-                        entries="${entries} ${display_name}"
-                    else
-                        local base=$(basename "$f")
-                        base="${base#dejatop_}"
-                        base="${base%.desktop}"
-                        entries="${entries} ${base}"
-                    fi
-                done
-            fi
-            COMPREPLY=( $(compgen -W "${entries}" -- "${cur}") )
+        --show|--delete|--update)
+            _dejatop_entry_names "${cur}"
+            return 0
+            ;;
+        --rename|--replace-icon)
+            # First argument: existing entry name
+            _dejatop_entry_names "${cur}"
             return 0
             ;;
     esac
 
-    # If current word starts with -, complete options
+    # Position-aware second argument for two-arg commands
+    if [[ "${COMP_CWORD}" -ge 3 ]]; then
+        local cmd="${COMP_WORDS[1]}"
+        case "${cmd}" in
+            --replace-icon)
+                # Second arg: icon file path
+                local IFS=$'\n'
+                COMPREPLY=( $(compgen -f -- "${cur}") )
+                compopt -o filenames 2>/dev/null
+                return 0
+                ;;
+            --rename)
+                # Second arg: new display name — free text, no completion
+                return 0
+                ;;
+        esac
+    fi
+
+    # Flag completion
     if [[ "${cur}" == -* ]]; then
         COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
         return 0
     fi
 
-    # Default: file completion (for executable path)
+    # Default: file/directory completion for the executable path argument.
+    # IFS=$'\n' is the fix for paths with spaces in directory names.
+    local IFS=$'\n'
     COMPREPLY=( $(compgen -f -- "${cur}") )
     compopt -o filenames 2>/dev/null
     return 0
+}
+
+# Helper: populate COMPREPLY with existing entry safe-names
+_dejatop_entry_names() {
+    local cur="$1"
+    local apps_dir="${HOME}/.local/share/applications"
+    local -a names=()
+    if [[ -d "${apps_dir}" ]]; then
+        local f b
+        for f in "${apps_dir}"/dejatop_*.desktop; do
+            [[ -f "${f}" ]] || continue
+            b=$(basename "${f}" .desktop)
+            b="${b#dejatop_}"
+            names+=("${b}")
+        done
+    fi
+    local IFS=$'\n'
+    COMPREPLY=( $(compgen -W "${names[*]}" -- "${cur}") )
 }
 
 complete -F _dejatop_completions dejatop
