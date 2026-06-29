@@ -20,14 +20,33 @@
     ofs << "date\n";
     
     for (const auto& env : envVars) {
-        ofs << "export " << env << "\n";
+        // Quote the value part so spaces in paths (e.g. WINEPREFIX=/path with spaces) work
+        size_t eq = env.find('=');
+        if (eq != string::npos) {
+            string key = env.substr(0, eq);
+            string val = env.substr(eq + 1);
+            ofs << "export " << key << "=\"" << escapeBash(val) << "\"\n";
+        } else {
+            ofs << "export " << env << "\n";
+        }
     }
     
     ofs << "export STEAM_COMPAT_DATA_PATH=\"" << escapeBash(prefixDir) << "\"\n";
     ofs << "export STEAM_COMPAT_CLIENT_INSTALL_PATH=\"" << escapeBash(getHomeDir()) << "/.local/share/Steam\"\n";
     ofs << "cd \"" << escapeBash(execDir) << "\"\n";
     
-    string cmd = "\"" + escapeBash(selProton) + "/proton\" run \"" + escapeBash(execPath) + "\"";
+    // Dynamically resolve the latest proton version via dejatop itself
+    std::error_code ec;
+    string dejatopBin = fs::read_symlink("/proc/self/exe", ec).string();
+    if (dejatopBin.empty() || ec) dejatopBin = "dejatop";
+
+    ofs << "LATEST_PROTON=$(\"" << escapeBash(dejatopBin) << "\" --get-latest-proton)\n";
+    ofs << "if [ -z \"$LATEST_PROTON\" ]; then\n";
+    ofs << "    echo \"Error: Proton not found. Install Proton via Steam or GE-Proton.\"\n";
+    ofs << "    exit 1\n";
+    ofs << "fi\n";
+    
+    string cmd = "\"$LATEST_PROTON/proton\" run \"" + escapeBash(execPath) + "\"";
     if (!launchOptions.empty()) {
         size_t pos = launchOptions.find("%command%");
         if (pos != string::npos) {

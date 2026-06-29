@@ -1,10 +1,10 @@
 # DejaTop
 
-> **Beta Release — v1.0.0-beta**
+> **v1.1.0-beta**
 
-**DejaTop** is a zero-dependency C++17 CLI tool that automatically generates `.desktop` entries for Linux native apps, AppImages, GOG games, and Windows games run through Wine or Steam Proton (including GE-Proton).
-
-No configuration files. No GUI. One command.
+Zero-dependency C++17 CLI tool that generates `.desktop` entries for Linux
+native apps, AppImages, GOG games, and Windows games run through Wine or
+Steam Proton (including GE-Proton). No configuration files. No GUI.
 
 ---
 
@@ -12,14 +12,17 @@ No configuration files. No GUI. One command.
 
 | Feature | Details |
 |---|---|
-| **Zero Dependencies** | Pure C++17, no GTK/Qt/ncurses/Python |
-| **One-Shot Magic** | Instant desktop entries, zero prompts |
-| **Smart Prefix Discovery** | Auto-detects existing prefixes from Steam, Heroic, Lutris |
-| **Flatpak Steam Support** | Scans both native and Flatpak Steam userdata |
-| **GE-Proton Priority** | Prefers GE-Proton → Experimental → Official Proton |
-| **Smart Icon Discovery** | Recursively picks best `.ico`/`.png` icon, or extracts directly from `.exe` files if `icoutils` is installed |
-| **Case-Insensitive Management** | `--delete`, `--replace-icon` work with partial names |
-| **Tab Completion** | Bash completion script included for all commands, flags, and existing entries |
+| **Zero Dependencies** | Pure C++17 — no GTK, Qt, ncurses, or Python |
+| **Smart Icon Discovery** | Scored scan with PNG/ICO binary header parsing; picks game-specific icons over shared engine defaults |
+| **Prefix Auto-Discovery** | Scans Steam (native + Flatpak), Heroic, and Lutris for existing Proton prefixes |
+| **GE-Proton Priority** | Prefers GE-Proton → Experimental → official; numeric version ordering |
+| **Steam Launch Options** | Reads per-game options from `shortcuts.vdf` for non-Steam shortcuts |
+| **Environment Variables** | `--env KEY=VALUE`, repeatable, all runners, values with spaces handled correctly |
+| **Wrapper Logging** | Proton launcher output logged to `~/.local/share/DejaTop/logs/<name>.log` |
+| **Entry Management** | `--show`, `--rename`, `--update`, `--list`, `--delete`, `--replace-icon` |
+| **Collision Guard** | `--force` required to overwrite an existing entry |
+| **Validation** | Runs `desktop-file-validate` post-creation if available |
+| **Tab Completion** | Bash completion for all commands, flags, and existing entry names |
 
 ---
 
@@ -27,13 +30,7 @@ No configuration files. No GUI. One command.
 
 ```bash
 make
-make install
-```
-
-Installs to `~/.local/bin/dejatop` and man page to `~/.local/share/man/man1/`.
-
-To uninstall:
-```bash
+make install   # installs to ~/.local/bin/ and ~/.local/share/man/man1/
 make uninstall
 ```
 
@@ -41,88 +38,125 @@ make uninstall
 
 ## Usage
 
-### One-Shot Creation
+### Creating entries
 
 ```bash
-# Windows game — auto-discovers Proton + existing prefix
-dejatop /mnt/Games/ACIII/ACIII.exe --name "Assassin's Creed III"
-
-# Native / GOG / AppImage — no Proton logic, pure exec
+# Native Linux game (GOG, AppImage, bare script)
 dejatop ~/GOG-Games/Portal/start.sh --name "Portal"
 
-# With all overrides
-dejatop /path/to/game.exe --name "My Game" --icon /path/to/icon.png --runner proton --prefix ~/.local/share/Steam/steamapps/compatdata/12345
+# Windows game — auto-discovers Proton and prefix
+dejatop /mnt/Games/MyGame/game.exe --name "My Game"
+
+# With MangoHud overlay and async shaders
+dejatop /path/game.exe --name "My Game" --env MANGOHUD=1 --env DXVK_ASYNC=1
+
+# Override category when auto-detection is wrong
+dejatop ~/apps/mpv.AppImage --name "mpv" --category "AudioVideo;Video;"
+
+# All overrides
+dejatop /path/game.exe \
+  --name "My Game"          \
+  --icon /path/to/icon.png  \
+  --runner proton           \
+  --prefix ~/.local/share/Steam/steamapps/compatdata/12345 \
+  --category "Game;"        \
+  --force
 ```
 
-For `.exe` files, DejaTop will:
-1. Scan Steam (native + Flatpak), Heroic, and Lutris for an existing prefix
-2. If none found, prompt `[Y/n]` to create a shared DejaTop prefix
-3. Pick the best Proton version (GE-Proton first)
-4. Auto-select the best icon from the game directory
-5. Generate the `.desktop` entry and Proton wrapper script
+**Category defaults:**
+- `Game;` for Wine/Proton runners
+- `Game;` for native apps installed under paths matching common game
+  directories (`GOG`, `games`, `Heroic`, `Lutris`, `Bottles`)
+- `Utility;Application;` for everything else
 
-### Managing Entries
+Use `--category` to override.
+
+**`--env` behaviour:**
+- `native` / `wine`: prepends `env KEY=VALUE` to the `Exec=` field
+- `proton`: writes `export KEY="VALUE"` lines into the wrapper script
+
+### Managing entries
 
 ```bash
-# Swap a wrong icon (case-insensitive)
-dejatop --replace-icon "assassin" /path/to/icon.png
+# Inspect — icon status, Proton version, prefix path, log size
+dejatop --show portal
 
-# Delete an entry
-dejatop --delete "portal"
+# Rename an entry (renames desktop file, wrapper, and log automatically)
+dejatop --rename "Portal" "Portal (GOG)"
 
-# List all managed entries
+# Refresh the Proton version in an existing wrapper
+dejatop --update portal
+
+# Swap a wrong icon
+dejatop --replace-icon portal /path/to/better-icon.png
+
+# Delete an entry (removes desktop file and wrapper script)
+dejatop --delete portal
+
+# List all managed entries with display name and safe id
 dejatop --list
 ```
 
-### Documentation
+### `--show` output
 
-```bash
-man dejatop
+Native entry:
+```
+DejaTop Entry: Portal
+----------------------------------------
+  Desktop:    ~/.local/share/applications/dejatop_Portal.desktop
+  Name:       Portal
+  Category:   Game;
+  Exec:       "/home/user/GOG-Games/Portal/start.sh"
+  Path:       /home/user/GOG-Games/Portal
+  Icon:       .../game/portal/resource/game.ico  ✔
+  Wrapper:    (none — native runner)
+  Log:        (none)
+```
+
+Proton entry:
+```
+DejaTop Entry: Cyberpunk 2077
+----------------------------------------
+  Desktop:    ~/.local/share/applications/dejatop_Cyberpunk2077.desktop
+  Name:       Cyberpunk 2077
+  Category:   Game;
+  Exec:       ~/.local/share/DejaTop/wrappers/Cyberpunk2077_wrapper.sh
+  Path:       /mnt/Games/Cyberpunk2077
+  Icon:       /mnt/Games/Cyberpunk2077/icon.png  ✔
+  Wrapper:    ~/.local/share/DejaTop/wrappers/Cyberpunk2077_wrapper.sh  ✔
+    Proton:   ~/.local/share/Steam/steamapps/common/GE-Proton10-34
+    Prefix:   ~/.local/share/Steam/steamapps/compatdata/1091500
+  Log:        ~/.local/share/DejaTop/logs/Cyberpunk2077.log  (2.4 KB)
 ```
 
 ---
 
-## Proton Runner Selection
+## Proton selection
 
-For `.exe` files, Proton is selected in this priority order:
+1. Latest GE-Proton (numeric comparison — `GE-Proton10-34` beats `GE-Proton9-27`)
+2. Proton - Experimental or latest official Proton
+3. Clear error if nothing found
 
-1. **Latest GE-Proton** (e.g. `GE-Proton9-27`) from `~/.steam/root/compatibilitytools.d/`
-2. **Proton - Experimental** or latest official Proton from Steam
-3. **Error** — if nothing is found, DejaTop exits cleanly with a clear message
-
-> `.sh` and `.AppImage` files are always treated as **native** — Proton/prefix logic is never triggered for them.
+`.sh` and `.AppImage` files are always native — Proton logic never triggers.
 
 ---
 
-## Prefix Discovery Order (for `.exe` files)
+## Prefix discovery (`.exe` only)
 
-1. Steam native — `~/.local/share/Steam/userdata/*/config/shortcuts.vdf`
-2. Steam Flatpak — `~/.var/app/com.valvesoftware.Steam/data/Steam/userdata/`
-3. Heroic — `~/.config/heroic/GamesConfig/*.json`
-4. Lutris — `~/.config/lutris/games/*.yml`
-5. **Prompt** — if nothing is found, asks `[Y/n]` to create a shared prefix
+1. Steam native → `~/.local/share/Steam/userdata/*/config/shortcuts.vdf`
+2. Steam Flatpak → `~/.var/app/com.valvesoftware.Steam/data/Steam/userdata/`
+3. Heroic → `~/.config/heroic/GamesConfig/*.json`
+4. Lutris → `~/.config/lutris/games/*.yml`
+5. Interactive prompt to create a shared prefix if none found
 
 ---
 
-## Roadmap & Todo
+## Planned
 
-- [x] **`.exe` icon extraction** — Icons baked inside `.exe` files can be extracted directly if `icoutils` (`wrestool` + `icotool`) is installed.
-- [ ] **Steam Flatpak — Proton execution** — Flatpak Steam prefix *discovery* works. However, running a Proton binary that lives inside the Flatpak sandbox from outside it requires a `flatpak run` wrapper (not yet implemented). Native Steam Proton works fine.
-- [ ] **GOG Galaxy prefix detection** — GOG game prefixes are not yet auto-discovered (GOG uses its own config location).
-- [ ] **Standalone Wine prefix detection** — Wine prefixes created without Heroic or Lutris (e.g. raw `WINEPREFIX=...` usage) are not scanned.
-- [ ] **`--delete` does not remove the wrapper script** — `--delete` removes the `.desktop` file but leaves the wrapper `.sh` in `~/.local/share/DejaTop/wrappers/`. Cleanup not yet implemented.
-- [ ] **`--list` shows raw sanitized names** — `--list` strips the `dejatop_` prefix and `.desktop` suffix from the filename, but shows the sanitized name (e.g. `AssassinsCreedIII`) instead of the human-readable `Name=` field from inside the file.
-- [ ] **Runner detection for unknown extensions** — Files without `.exe`, `.sh`, or `.AppImage` extensions (e.g. bare binaries with no extension) are always treated as native. There is no fallback prompt to let the user choose the runner.
-- [ ] **`--runner wine` has no prefix management** — When `--runner wine` is passed manually, the `Exec=` is set to `wine "path/to/game.exe"` directly with no wrapper script and no prefix handling.
-- [ ] **Heroic JSON parsing is naive** — The Heroic parser does a simple string search for `"winePrefix":` in the file. If Heroic changes its JSON schema or uses nested configs it may miss the prefix.
-- [ ] **`sanitizeName` strips all special characters** — Game names with spaces, dots, or unicode (e.g. "DOOM (2016)") get heavily sanitized, making filenames like `DOOM2016` with no separator. A smarter slug function would preserve readability.
-- [ ] **`--delete` and `--replace-icon` match on filename, not `Name=`** — Searching `"portal"` matches `dejatop_Portal.desktop` by filename. If the user names their entry something different from the filename (via `--name`), the lookup may fail or match the wrong entry.
-- [ ] **Library Batch Mode** — Add a `--batch` command to scan entire game directories (e.g., `~/GOG Games/`) and generate entries for all installed games in a single pass.
-- [ ] **Entry Management** — Add `--rename` to seamlessly change the name of existing entries, and `--update` to refresh the selected Proton version.
-- [ ] **Dry-Run Previews** — Add `--dry-run` to safely preview the generated desktop entry and wrapper script without writing anything to disk.
-- [ ] **Enhanced Launcher Discovery** — Improve detection logic for Heroic Games Launcher, Lutris, and standalone Wine prefixes.
-- [ ] **Custom Environment Variables** — Support reading Steam's per-game launch options, and add a `--env` flag to pass custom variables (like `MANGOHUD=1`) to any runner.
-- [ ] **Robustness & Validation** — Add strict verification using `desktop-file-validate` to ensure 100% standard compliance, and fix edge cases involving paths with special characters.
+- `--batch <dir>` — generate entries for a whole library in one pass
+- `--dry-run` — preview without writing
+- Combined management commands in a single invocation
+- Steam Flatpak GE-Proton execution wrapper
 
 ---
 

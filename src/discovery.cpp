@@ -1,6 +1,5 @@
 #include "../include/discovery.hpp"
-#include <cctype>
-#include <sstream>
+
 
 namespace {
 
@@ -277,14 +276,16 @@ int getIconScore(const fs::path& path, const string& gameName, const fs::path& e
     for (const auto& m : qualityPenalties) if (fLower.find(m) != string::npos) score -= 30;
 
     // 3.6 Ancestor path match — bounded at execDir (BUG-34 fix)
+    // Also try matching gameName with spaces stripped so a subfolder named
+    // "portal2" correctly matches the display name "Portal 2".
     if (!gLower.empty()) {
+        string gLowerNoSpaces = gLower;
+        gLowerNoSpaces.erase(remove(gLowerNoSpaces.begin(), gLowerNoSpaces.end(), ' '), gLowerNoSpaces.end());
         fs::path p = path.parent_path();
         fs::path stopAt = execDir;
         while (!p.empty() && p != stopAt && p.has_filename()) {
-            if (toLower(p.filename().string()) == gLower) {
-                score += 50;
-                break;
-            }
+            string comp = toLower(p.filename().string());
+            if (comp == gLower || comp == gLowerNoSpaces) { score += 50; break; }
             p = p.parent_path();
         }
     }
@@ -344,6 +345,7 @@ vector<string> findIcons(const string& execDir, const string& gameName) {
     for (const auto& f : files) {
         if (toLower(f.extension().string()) != ".desktop") continue;
         ifstream in(f);
+        if (!in.is_open()) continue;
         string line, targetIcon;
         while (std::getline(in, line)) {
             if (line.rfind("Icon=", 0) == 0) { targetIcon = line.substr(5); break; }
@@ -408,7 +410,7 @@ string extractExeIcon(const string& execPath, const string& safeName) {
                 }
             }
         }
-    } catch (...) {}
+    } catch (const fs::filesystem_error&) {}
 
     if (bestIco.empty()) {
         fs::remove_all(tmpBase);
@@ -429,7 +431,7 @@ string extractExeIcon(const string& execPath, const string& safeName) {
                     }
                 }
             }
-        } catch (...) {}
+        } catch (const fs::filesystem_error&) {}
     }
 
     string outPng = (fs::path(iconsDir) / (safeName + ".png")).string();
@@ -569,13 +571,19 @@ string autoDiscoverPrefix(const string& execPath) {
 string findDesktopFile(const string& query) {
     string appsDir = (fs::path(getHomeDir()) / ".local" / "share" / "applications").string();
     string target = toLower(query);
-    if (fs::exists(appsDir)) {
-        for (const auto& entry : fs::directory_iterator(appsDir)) {
-            string fname = entry.path().filename().string();
-            if (fname.find("dejatop_") == 0) {
-                if (toLower(fname).find(target) != string::npos) {
+    if (!fs::exists(appsDir)) return "";
+    for (const auto& entry : fs::directory_iterator(appsDir)) {
+        string fname = entry.path().filename().string();
+        if (fname.find("dejatop_") != 0) continue;
+        // Search on Name= inside the file so "Portal 2" finds dejatop_Portal2.desktop
+        ifstream in(entry.path());
+        if (!in.is_open()) continue;
+        string line;
+        while (getline(in, line)) {
+            if (line.rfind("Name=", 0) == 0) {
+                if (toLower(line.substr(5)).find(target) != string::npos)
                     return entry.path().string();
-                }
+                break;
             }
         }
     }
