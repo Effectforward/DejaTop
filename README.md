@@ -1,6 +1,6 @@
 # DejaTop
 
-> **v1.1.0-beta**
+> **v1.0.0**
 
 Zero-dependency C++17 CLI tool that generates `.desktop` entries for Linux
 native apps, AppImages, GOG games, and Windows games run through Wine or
