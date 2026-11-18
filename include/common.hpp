@@ -18,6 +18,7 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+using std::cerr;
 using std::cin;
 using std::cout;
 using std::getline;
@@ -33,14 +34,15 @@ using std::to_string;
 using std::transform;
 using std::vector;
 
-constexpr const char *RESET = "\033[0m";
-constexpr const char *BOLD = "\033[1m";
-constexpr const char *TITLE_COLOR = "\033[38;2;203;166;247m";
-constexpr const char *PROMPT_COLOR = "\033[38;2;166;227;161m";
-constexpr const char *SUCCESS_COLOR = "\033[38;2;166;227;161m";
-constexpr const char *ERROR_COLOR = "\033[38;2;243;139;168m";
+constexpr const char *VERSION = "1.0.1";
 
-constexpr const char *VERSION = "1.0.0";
+// Initialised by initOutput(): empty when colour is disabled.
+extern const char *RESET;
+extern const char *BOLD;
+extern const char *TITLE_COLOR;
+extern const char *PROMPT_COLOR;
+extern const char *SUCCESS_COLOR;
+extern const char *ERROR_COLOR;
 
 constexpr int EXEC_SUCCESS = 0;
 constexpr int EXEC_FAILED = 127;

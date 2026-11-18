@@ -1,5 +1,24 @@
 #include "../include/utils.hpp"
 
+const char *RESET = "\033[0m";
+const char *BOLD = "\033[1m";
+const char *TITLE_COLOR = "\033[38;2;203;166;247m";
+const char *PROMPT_COLOR = "\033[38;2;166;227;161m";
+const char *SUCCESS_COLOR = "\033[38;2;166;227;161m";
+const char *ERROR_COLOR = "\033[38;2;243;139;168m";
+
+void initOutput() {
+    // Colour only for an interactive stdout, and never when NO_COLOR is present.
+    if (!isatty(STDOUT_FILENO) || getenv("NO_COLOR") != nullptr) {
+        RESET = "";
+        BOLD = "";
+        TITLE_COLOR = "";
+        PROMPT_COLOR = "";
+        SUCCESS_COLOR = "";
+        ERROR_COLOR = "";
+    }
+}
+
 string getHomeDir() {
     const char* home = getenv("HOME");
     if (home) return string(home);
@@ -15,6 +34,25 @@ string sanitizeName(const string& name) {
     return safe;
 }
 
+// Filesystem names are limited to 255 bytes. A long display name is truncated
+// with a stable hash suffix so the same input always produces the same id.
+string makeSafeId(const string& name) {
+    constexpr size_t MAX_ID = 120;
+    string safe = sanitizeName(name);
+    if (safe.empty() || safe.size() <= MAX_ID) return safe;
+
+    uint32_t hash = 2166136261u;
+    for (unsigned char c : name) {
+        hash ^= c;
+        hash *= 16777619u;
+    }
+    char suffix[8];
+    std::snprintf(suffix, sizeof(suffix), "-%06x", hash & 0xffffffu);
+
+    string id = safe.substr(0, MAX_ID) + suffix;
+    return id;
+}
+
 string toLower(string s) {
     transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
     return s;
@@ -25,6 +63,33 @@ string stripNewlines(string s) {
     s.erase(std::remove(s.begin(), s.end(), '\r'), s.end());
     return s;
 }
+
+// Desktop Entry string values: \\, \n, \t and \r are the only escapes.
+string escapeDesktopValue(const string& s) {
+    string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\t': out += "\\t";  break;
+            case '\r': out += "\\r";  break;
+            default:   out += c;      break;
+        }
+    }
+    return out;
+}
+
+bool validEnvKey(const string& key) {
+    if (key.empty()) return false;
+    unsigned char first = static_cast<unsigned char>(key[0]);
+    if (!std::isalpha(first) && key[0] != '_') return false;
+    for (unsigned char c : key) {
+        if (!std::isalnum(c) && c != '_') return false;
+    }
+    return true;
+}
+
 
 string escapeBash(const string& s) {
     string res;
@@ -46,6 +111,10 @@ string escapeDesktop(const string& s) {
 
 [[nodiscard]] int runCommand(const vector<string>& args) {
     if (args.empty()) return EXEC_FORK_FAILED;
+    // Flush before fork: the child inherits the buffers, and every fork would
+    // otherwise re-emit whatever is still pending.
+    std::cout.flush();
+    std::cerr.flush();
     pid_t pid = fork();
     if (pid < 0) return EXEC_FORK_FAILED;
     if (pid == 0) {

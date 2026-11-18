@@ -1,9 +1,11 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -O3 -Wall
+CXXFLAGS = -std=c++17 -O3 -Wall -Wextra
+DEPFLAGS = -MMD -MP
 
 TARGET = dejatop
 SRC = $(wildcard src/*.cpp)
 OBJ = $(patsubst src/%.cpp,obj/%.o,$(SRC))
+DEP = $(OBJ:.o=.d)
 
 PREFIX = $(HOME)/.local/bin
 APPS_DIR = $(HOME)/.local/share/applications
@@ -17,7 +19,19 @@ $(TARGET): $(OBJ)
 
 obj/%.o: src/%.cpp
 	@mkdir -p obj
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@
+
+-include $(DEP)
+
+test: $(TARGET)
+	@fail=0; \
+	for t in tests/t*.sh; do \
+		echo "==== $$t"; \
+		bash "$$t" || fail=1; \
+	done; \
+	exit $$fail
+
+check: test
 
 install: $(TARGET)
 	mkdir -p $(PREFIX)
@@ -40,4 +54,4 @@ uninstall:
 	rm -f $(COMP_DIR)/dejatop
 	rm -f $(APPS_DIR)/dejatop.desktop
 
-.PHONY: all install clean uninstall
+.PHONY: all install clean uninstall test check

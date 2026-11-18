@@ -1,4 +1,4 @@
-.TH DEJATOP 1 "June 2026" "Version 1.0.0" "User Commands"
+.TH DEJATOP 1 "November 2026" "Version 1.0.1" "User Commands"
 .SH NAME
 dejatop \- Desktop entry creator for Linux apps, AppImages, and Windows games
 .SH SYNOPSIS
@@ -50,6 +50,10 @@ files default to
 .I .exe
 files default to
 .BR proton .
+An explicit
+.B \-\-runner
+overrides extension detection (for example, a wrapper script that must run
+under Proton).
 .TP
 .B \-\-prefix \fIpath\fR
 Override the Wine/Proton prefix.
@@ -71,6 +75,9 @@ All other native apps default to
 .TP
 .BR \-\-env " \fIKEY=VALUE\fR"
 Pass an environment variable at launch. Repeatable.
+Keys must be shell identifiers
+.RB ( [A-Za-z_][A-Za-z0-9_]* );
+invalid keys are rejected before anything is written.
 For
 .B native
 and
@@ -227,6 +234,17 @@ Fix a wrong icon:
 .TP
 Remove an entry:
 .B dejatop \-\-delete portal
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Operational failure: missing target, missing entry, unreadable directory,
+or a failed write.
+.TP
+.B 2
+Usage error or an ambiguous entry query. Nothing was changed.
 .SH AUTHOR
 Created by DejaTop Contributors.
 .SH LICENSE

@@ -21,4 +21,3 @@ string extractLutrisPrefix(const string& execPath);
 string extractSteamPrefix(const string& execPath);
 string extractSteamLaunchOptions(const string& execPath);
 string autoDiscoverPrefix(const string& execPath);
-string findDesktopFile(const string& query);

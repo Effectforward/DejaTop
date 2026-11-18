@@ -6,7 +6,7 @@ _dejatop_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    opts="--name --icon --runner --prefix --category --env --force --show --rename --update --replace-icon --delete --list --version --help"
+    opts="--name --icon --runner --prefix --category --env --force --show --rename --replace-icon --delete --list --version --help"
     runners="native wine proton"
 
     case "${prev}" in
@@ -24,7 +24,7 @@ _dejatop_completions() {
         --name|--category|--env)
             return 0
             ;;
-        --show|--delete|--update)
+        --show|--delete)
             _dejatop_entry_names "${cur}"
             return 0
             ;;

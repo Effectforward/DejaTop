@@ -1,6 +1,6 @@
 # DejaTop
 
-> **v1.0.0**
+> **v1.0.1**
 
 Zero-dependency C++17 CLI tool that generates `.desktop` entries for Linux
 native apps, AppImages, GOG games, and Windows games run through Wine or
@@ -19,7 +19,7 @@ Steam Proton (including GE-Proton). No configuration files. No GUI.
 | **Steam Launch Options** | Reads per-game options from `shortcuts.vdf` for non-Steam shortcuts |
 | **Environment Variables** | `--env KEY=VALUE`, repeatable, all runners, values with spaces handled correctly |
 | **Wrapper Logging** | Proton launcher output logged to `~/.local/share/DejaTop/logs/<name>.log` |
-| **Entry Management** | `--show`, `--rename`, `--update`, `--list`, `--delete`, `--replace-icon` |
+| **Entry Management** | `--show`, `--rename`, `--list`, `--delete`, `--replace-icon` |
 | **Collision Guard** | `--force` required to overwrite an existing entry |
 | **Validation** | Runs `desktop-file-validate` post-creation if available |
 | **Tab Completion** | Bash completion for all commands, flags, and existing entry names |
@@ -72,6 +72,8 @@ dejatop /path/game.exe \
 Use `--category` to override.
 
 **`--env` behaviour:**
+- Keys must be shell identifiers (`[A-Za-z_][A-Za-z0-9_]*`); invalid keys are
+  rejected before anything is written.
 - `native` / `wine`: prepends `env KEY=VALUE` to the `Exec=` field
 - `proton`: writes `export KEY="VALUE"` lines into the wrapper script
 
@@ -83,9 +85,6 @@ dejatop --show portal
 
 # Rename an entry (renames desktop file, wrapper, and log automatically)
 dejatop --rename "Portal" "Portal (GOG)"
-
-# Refresh the Proton version in an existing wrapper
-dejatop --update portal
 
 # Swap a wrong icon
 dejatop --replace-icon portal /path/to/better-icon.png
@@ -137,7 +136,8 @@ DejaTop Entry: Cyberpunk 2077
 2. Proton - Experimental or latest official Proton
 3. Clear error if nothing found
 
-`.sh` and `.AppImage` files are always native — Proton logic never triggers.
+`.sh` and `.AppImage` files default to native. Pass `--runner proton` to
+override that when a wrapper script or AppImage really needs Proton.
 
 ---
 

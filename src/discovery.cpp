@@ -568,28 +568,6 @@ string autoDiscoverPrefix(const string& execPath) {
     return "";
 }
 
-string findDesktopFile(const string& query) {
-    string appsDir = (fs::path(getHomeDir()) / ".local" / "share" / "applications").string();
-    string target = toLower(query);
-    if (!fs::exists(appsDir)) return "";
-    for (const auto& entry : fs::directory_iterator(appsDir)) {
-        string fname = entry.path().filename().string();
-        if (fname.find("dejatop_") != 0) continue;
-        // Search on Name= inside the file so "Portal 2" finds dejatop_Portal2.desktop
-        ifstream in(entry.path());
-        if (!in.is_open()) continue;
-        string line;
-        while (getline(in, line)) {
-            if (line.rfind("Name=", 0) == 0) {
-                if (toLower(line.substr(5)).find(target) != string::npos)
-                    return entry.path().string();
-                break;
-            }
-        }
-    }
-    return "";
-}
-
 string extractSteamLaunchOptions(const string& execPath) {
     string home = getHomeDir();
     vector<string> userdataDirs = {

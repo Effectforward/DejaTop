@@ -1,6 +1,6 @@
 #include "../include/generator.hpp"
 
-[[nodiscard]] string createWrapper(const string& safeName, const string& execDir, const string& execPath, const string& selProton, const string& customPrefix, const vector<string>& envVars, const string& launchOptions) {
+[[nodiscard]] string createWrapper(const string& safeName, const string& execDir, const string& execPath, const string& customPrefix, const vector<string>& envVars, const string& launchOptions) {
     string wrapperDir = (fs::path(getHomeDir()) / ".local" / "share" / "DejaTop" / "wrappers").string();
     fs::create_directories(wrapperDir);
     string logDir = (fs::path(getHomeDir()) / ".local" / "share" / "DejaTop" / "logs").string();
@@ -73,7 +73,7 @@
     dofs << "[Desktop Entry]\n";
     dofs << "Version=1.0\n";
     dofs << "Type=Application\n";
-    dofs << "Name=" << stripNewlines(gameName) << "\n";
+    dofs << "Name=" << escapeDesktopValue(gameName) << "\n";
     dofs << "Comment=Created by DejaTop\n";
     dofs << "Exec=" << escapeDesktop(stripNewlines(finalExec)) << "\n";
     dofs << "Path=" << escapeDesktop(stripNewlines(execDir)) << "\n"; // Removed double quotes to fix spaces issue
